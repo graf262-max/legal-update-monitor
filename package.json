@@ -1,0 +1,25 @@
+{
+  "name": "legal-update-monitor",
+  "version": "1.0.0",
+  "description": "Korean Legal Update Monitoring System - Daily briefing service",
+  "type": "module",
+  "scripts": {
+    "dev": "netlify dev",
+    "test": "node --test src/**/*.test.js",
+    "test:collectors": "node src/test-collectors.js"
+  },
+  "dependencies": {
+    "@netlify/functions": "^2.4.0",
+    "@sendgrid/mail": "^8.1.0",
+    "cheerio": "^1.0.0-rc.12",
+    "googleapis": "^129.0.0",
+    "node-fetch": "^3.3.2",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

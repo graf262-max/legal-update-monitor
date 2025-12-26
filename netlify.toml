@@ -1,0 +1,17 @@
+[build]
+  functions = "netlify/functions"
+  publish = "public"
+
+[functions]
+  node_bundler = "esbuild"
+  external_node_modules = ["cheerio"]
+
+# 매일 00:00 UTC = 09:00 KST 실행
+[functions."daily-brief"]
+  schedule = "0 0 * * *"
+
+# 수동 테스트용 엔드포인트
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
