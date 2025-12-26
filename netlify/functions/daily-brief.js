@@ -1,4 +1,5 @@
-const fetch = require('node-fetch');
+// ES Module 형식 (package.json에 "type": "module" 있음)
+import fetch from 'node-fetch';
 
 // SSL 인증서 검증 비활성화
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -99,19 +100,21 @@ async function collectFtc() {
         const html = await res.text();
         const items = [];
 
-        // nttSn 추출
-        const nttSnRegex = /nttSn=(\d+)/g;
-        const titleRegex = /<a[^>]*onclick[^>]*>([^<]+)<\/a>/g;
+        // nttSn과 제목 추출
+        const linkRegex = /nttSn=(\d+)/g;
+        const matches = [...html.matchAll(linkRegex)];
+        const uniqueNttSns = [...new Set(matches.map(m => m[1]))];
 
-        const nttSns = [...html.matchAll(nttSnRegex)].map(m => m[1]);
-        const titles = [...html.matchAll(titleRegex)].map(m => m[1].trim());
+        // 제목 추출 (onclick 태그에서)
+        const titleRegex = /onclick="[^"]*nttSn=(\d+)[^"]*"[^>]*>\s*([^<]+)/g;
+        const titleMatches = [...html.matchAll(titleRegex)];
+        const titleMap = {};
+        for (const m of titleMatches) {
+            titleMap[m[1]] = m[2].trim();
+        }
 
-        const uniqueNttSns = [...new Set(nttSns)];
-
-        for (let i = 0; i < Math.min(uniqueNttSns.length, titles.length, 10); i++) {
-            const title = titles[i];
-            const nttSn = uniqueNttSns[i];
-
+        for (const nttSn of uniqueNttSns.slice(0, 15)) {
+            const title = titleMap[nttSn];
             if (!title || title.length < 5) continue;
 
             const isFtc = /공정거래|독점규제|약관|하도급|가맹|표시광고|대규모유통|소비자|방문판매|전자상거래/.test(title);
@@ -138,8 +141,8 @@ async function collectFtc() {
     }
 }
 
-// 메인 핸들러
-exports.handler = async (event, context) => {
+// Netlify Function Handler (ES Module 형식)
+export const handler = async (event, context) => {
     console.log('[daily-brief] Start:', new Date().toISOString());
 
     try {
@@ -152,6 +155,7 @@ exports.handler = async (event, context) => {
             const moelItems = await collectMoel();
             stats['고용노동부'] = moelItems.length;
             items.push(...moelItems);
+            console.log('[moel] Collected:', moelItems.length);
         } catch (e) {
             errors.push({ source: '고용노동부', error: e.message });
             stats['고용노동부'] = 0;
@@ -162,6 +166,7 @@ exports.handler = async (event, context) => {
             const ftcItems = await collectFtc();
             stats['공정거래위원회'] = ftcItems.length;
             items.push(...ftcItems);
+            console.log('[ftc] Collected:', ftcItems.length);
         } catch (e) {
             errors.push({ source: '공정거래위원회', error: e.message });
             stats['공정거래위원회'] = 0;
