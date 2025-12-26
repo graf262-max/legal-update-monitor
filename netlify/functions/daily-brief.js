@@ -1,6 +1,4 @@
-// ES Module 형식 (package.json에 "type": "module" 있음)
-import fetch from 'node-fetch';
-
+// Node 18+ 내장 fetch 사용 (외부 의존성 없음)
 // SSL 인증서 검증 비활성화
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
@@ -53,7 +51,10 @@ async function collectMoel() {
         const res = await fetch('https://www.moel.go.kr/rss/lawinfo.do', {
             headers: { 'User-Agent': 'Mozilla/5.0 (compatible)' }
         });
-        if (!res.ok) return [];
+        if (!res.ok) {
+            console.log('[moel] Response not ok:', res.status);
+            return [];
+        }
 
         const xml = await res.text();
         const items = [];
@@ -82,6 +83,7 @@ async function collectMoel() {
                 items.push(item);
             }
         }
+        console.log('[moel] Parsed items:', items.length);
         return items;
     } catch (e) {
         console.error('[moel] Error:', e.message);
@@ -95,27 +97,25 @@ async function collectFtc() {
         const res = await fetch('https://www.ftc.go.kr/www/selectBbsNttList.do?bordCd=105&key=193', {
             headers: { 'User-Agent': 'Mozilla/5.0 (compatible)' }
         });
-        if (!res.ok) return [];
+        if (!res.ok) {
+            console.log('[ftc] Response not ok:', res.status);
+            return [];
+        }
 
         const html = await res.text();
         const items = [];
 
         // nttSn과 제목 추출
-        const linkRegex = /nttSn=(\d+)/g;
-        const matches = [...html.matchAll(linkRegex)];
-        const uniqueNttSns = [...new Set(matches.map(m => m[1]))];
-
-        // 제목 추출 (onclick 태그에서)
         const titleRegex = /onclick="[^"]*nttSn=(\d+)[^"]*"[^>]*>\s*([^<]+)/g;
-        const titleMatches = [...html.matchAll(titleRegex)];
-        const titleMap = {};
-        for (const m of titleMatches) {
-            titleMap[m[1]] = m[2].trim();
-        }
+        const matches = [...html.matchAll(titleRegex)];
 
-        for (const nttSn of uniqueNttSns.slice(0, 15)) {
-            const title = titleMap[nttSn];
-            if (!title || title.length < 5) continue;
+        const seen = new Set();
+        for (const m of matches) {
+            const nttSn = m[1];
+            const title = m[2].trim();
+
+            if (seen.has(nttSn) || !title || title.length < 5) continue;
+            seen.add(nttSn);
 
             const isFtc = /공정거래|독점규제|약관|하도급|가맹|표시광고|대규모유통|소비자|방문판매|전자상거래/.test(title);
             const { matched, law } = isTargetLaw(title);
@@ -134,6 +134,7 @@ async function collectFtc() {
                 items.push(item);
             }
         }
+        console.log('[ftc] Parsed items:', items.length);
         return items;
     } catch (e) {
         console.error('[ftc] Error:', e.message);
@@ -141,8 +142,8 @@ async function collectFtc() {
     }
 }
 
-// Netlify Function Handler (ES Module 형식)
-export const handler = async (event, context) => {
+// Netlify Function Handler
+export async function handler(event, context) {
     console.log('[daily-brief] Start:', new Date().toISOString());
 
     try {
@@ -155,8 +156,8 @@ export const handler = async (event, context) => {
             const moelItems = await collectMoel();
             stats['고용노동부'] = moelItems.length;
             items.push(...moelItems);
-            console.log('[moel] Collected:', moelItems.length);
         } catch (e) {
+            console.error('[moel] Catch error:', e);
             errors.push({ source: '고용노동부', error: e.message });
             stats['고용노동부'] = 0;
         }
@@ -166,8 +167,8 @@ export const handler = async (event, context) => {
             const ftcItems = await collectFtc();
             stats['공정거래위원회'] = ftcItems.length;
             items.push(...ftcItems);
-            console.log('[ftc] Collected:', ftcItems.length);
         } catch (e) {
+            console.error('[ftc] Catch error:', e);
             errors.push({ source: '공정거래위원회', error: e.message });
             stats['공정거래위원회'] = 0;
         }
@@ -202,11 +203,11 @@ export const handler = async (event, context) => {
             })
         };
     } catch (error) {
-        console.error('[daily-brief] Error:', error);
+        console.error('[daily-brief] Fatal error:', error);
         return {
             statusCode: 500,
             headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-            body: JSON.stringify({ success: false, error: error.message })
+            body: JSON.stringify({ success: false, error: error.message, stack: error.stack })
         };
     }
-};
+}
