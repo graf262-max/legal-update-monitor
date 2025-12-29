@@ -68,14 +68,23 @@ async function collectLawGoKr(env) {
                 const lawRegex = /<law[^>]*>[\s\S]*?<법령명한글><!\[CDATA\[(.*?)\]\]><\/법령명한글>[\s\S]*?<공포일자>(\d+)<\/공포일자>[\s\S]*?<제개정구분명>(.*?)<\/제개정구분명>[\s\S]*?<법령상세링크>(.*?)<\/법령상세링크>[\s\S]*?<\/law>/g;
                 let match;
 
+
                 while ((match = lawRegex.exec(xml)) !== null) {
                     const lawName = match[1].trim();
                     const pubDate = match[2];
                     const changeType = match[3];
                     const link = match[4].replace(/&amp;/g, '&');
 
-                    // 2024년 이후 개정된 법령만 포함
-                    if (pubDate && parseInt(pubDate.substring(0, 4)) >= 2024) {
+                    // 최근 6개월 이내 공포된 법령만 포함
+                    const sixMonthsAgo = new Date();
+                    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+                    const pubDateObj = new Date(
+                        parseInt(pubDate.substring(0, 4)),
+                        parseInt(pubDate.substring(4, 6)) - 1,
+                        parseInt(pubDate.substring(6, 8))
+                    );
+
+                    if (pubDate && pubDateObj >= sixMonthsAgo) {
                         const item = {
                             source: 'law.go.kr',
                             type: changeType || '법령',
