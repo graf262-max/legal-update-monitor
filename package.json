@@ -2,7 +2,6 @@
   "name": "legal-update-monitor",
   "version": "1.0.0",
   "description": "Korean Legal Update Monitoring System - Daily briefing service",
-  "type": "module",
   "scripts": {
     "dev": "netlify dev",
     "test": "node --test src/**/*.test.js",

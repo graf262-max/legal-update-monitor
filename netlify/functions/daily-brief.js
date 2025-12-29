@@ -1,5 +1,5 @@
-// 가장 단순한 테스트 함수
-export async function handler(event, context) {
+// CommonJS 형식 - 가장 단순한 테스트 함수
+exports.handler = async function (event, context) {
     console.log('[daily-brief] Test function called');
 
     return {
@@ -16,4 +16,4 @@ export async function handler(event, context) {
             stats: { test: 1 }
         })
     };
-}
+};
