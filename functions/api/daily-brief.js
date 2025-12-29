@@ -111,7 +111,8 @@ async function collectLawGoKr(env) {
 
 // 열린국회정보 API - 발의법률안
 async function collectAssembly(env) {
-    const apiKey = env?.ASSEMBLY_API_KEY;
+    // 환경변수가 안 되면 직접 사용 (테스트용)
+    const apiKey = env?.ASSEMBLY_API_KEY || '7855a6d5b7294429a5603faa65912fa5';
     if (!apiKey) {
         return { items: [], error: 'API 키 미설정 (ASSEMBLY_API_KEY)' };
     }
