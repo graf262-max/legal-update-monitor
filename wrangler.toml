@@ -1,0 +1,8 @@
+name = "legal-update-monitor"
+main = "functions/api/daily-brief.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+# 환경변수는 Cloudflare 대시보드에서 설정
+# LAW_GO_KR_OC = ""
+# ASSEMBLY_API_KEY = ""
