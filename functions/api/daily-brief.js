@@ -1,5 +1,5 @@
 // Cloudflare Pages Function - 법률 업데이트 수집 API
-// API 경로: /api/daily-brief
+// 경로: /api/daily-brief
 
 // 관리 대상 법률 (14개)
 const TARGET_LAWS = [
@@ -291,7 +291,7 @@ async function collectFsc() {
     } catch (e) { console.error('[fsc]', e); return []; }
 }
 
-// Cloudflare Pages Function Handler
+// Cloudflare Pages Functions Handler
 export async function onRequest(context) {
     const { env } = context;
     console.log('[daily-brief] Start:', new Date().toISOString());
@@ -352,3 +352,6 @@ export async function onRequest(context) {
         });
     }
 }
+
+// 기본 export 추가 (Cloudflare Pages 호환성)
+export default { fetch: onRequest };
