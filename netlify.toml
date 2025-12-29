@@ -4,11 +4,8 @@
 
 [functions]
   node_bundler = "esbuild"
-  external_node_modules = ["cheerio"]
 
-# 매일 00:00 UTC = 09:00 KST 실행
-[functions."daily-brief"]
-  schedule = "0 0 * * *"
+# 참고: 스케줄 기능은 나중에 별도 함수로 추가 예정
 
 # 수동 테스트용 엔드포인트
 [[redirects]]
