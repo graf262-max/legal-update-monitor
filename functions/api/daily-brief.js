@@ -1,4 +1,4 @@
-// Cloudflare Pages Function - 법률 업데이트 수집 API (디버깅용)
+// Cloudflare Pages Function - API 전용 (국가법령정보센터 + 열린국회정보)
 // 경로: /api/daily-brief
 
 // 관리 대상 법률 (14개)
@@ -41,161 +41,97 @@ function calculateImportance(item) {
     if (text.includes('직제')) score -= 5;
     if ((item.source || '').includes('law.go.kr')) score += 2;
     else if ((item.source || '').includes('assembly.go.kr')) score += 2;
-    else score += 1;
     return Math.min(5, Math.max(1, Math.round(score / 2)));
-}
-
-// 디버그 정보를 저장할 배열
-let debugLogs = [];
-
-// 고용노동부 RSS (가장 간단한 것부터 테스트)
-async function collectMoel() {
-    const url = 'https://www.moel.go.kr/rss/lawinfo.do';
-    try {
-        const res = await fetch(url);
-        debugLogs.push({ source: 'moel', status: res.status, ok: res.ok });
-
-        if (!res.ok) return [];
-
-        const xml = await res.text();
-        debugLogs.push({ source: 'moel', textLength: xml.length, sample: xml.substring(0, 200) });
-
-        const items = [];
-        const regex = /<item>[\s\S]*?<title><!\[CDATA\[(.*?)\]\]><\/title>[\s\S]*?<link>(.*?)<\/link>[\s\S]*?<dc:date>(.*?)<\/dc:date>[\s\S]*?<\/item>/g;
-        let match;
-
-        while ((match = regex.exec(xml)) !== null) {
-            const title = match[1].trim();
-            const link = match[2].trim();
-            const dateStr = match[3].split(' ')[0];
-
-            const isLabor = /직업안정|채용절차|근로기준|고용|노동|고용보험|산업안전|최저임금|퇴직연금|노동조합/.test(title);
-            const { matched, law } = isTargetLaw(title);
-
-            if (matched || isLabor) {
-                const item = {
-                    source: 'moel.go.kr', type: '입법·행정예고', title,
-                    law: law?.name || '노동관계법령', pubDate: dateStr, link, content: ''
-                };
-                item.importance = calculateImportance(item);
-                items.push(item);
-            }
-        }
-        debugLogs.push({ source: 'moel', itemsFound: items.length });
-        return items;
-    } catch (e) {
-        debugLogs.push({ source: 'moel', error: e.message });
-        return [];
-    }
-}
-
-// 공정거래위원회 (스크래핑)
-async function collectFtc() {
-    const url = 'https://www.ftc.go.kr/www/selectBbsNttList.do?bordCd=105&key=193';
-    try {
-        const res = await fetch(url);
-        debugLogs.push({ source: 'ftc', status: res.status, ok: res.ok });
-
-        if (!res.ok) return [];
-
-        const html = await res.text();
-        debugLogs.push({ source: 'ftc', textLength: html.length });
-
-        const items = [];
-        const titleRegex = /onclick="[^"]*nttSn=(\d+)[^"]*"[^>]*>\s*([^<]+)/g;
-        const matches = [...html.matchAll(titleRegex)];
-
-        debugLogs.push({ source: 'ftc', regexMatches: matches.length });
-
-        const seen = new Set();
-        for (const m of matches) {
-            const nttSn = m[1];
-            const title = m[2].trim();
-            if (seen.has(nttSn) || !title || title.length < 5) continue;
-            seen.add(nttSn);
-
-            const isFtc = /공정거래|독점규제|약관|하도급|가맹|표시광고|대규모유통|소비자|방문판매|전자상거래/.test(title);
-            const { matched, law } = isTargetLaw(title);
-
-            if (matched || isFtc) {
-                const item = {
-                    source: 'ftc.go.kr', type: '입법·행정예고', title,
-                    law: law?.name || '공정거래 관련 법령', pubDate: '',
-                    link: `https://www.ftc.go.kr/www/selectBbsNttView.do?key=193&bordCd=105&nttSn=${nttSn}`, content: ''
-                };
-                item.importance = calculateImportance(item);
-                items.push(item);
-            }
-        }
-        return items;
-    } catch (e) {
-        debugLogs.push({ source: 'ftc', error: e.message });
-        return [];
-    }
 }
 
 // 국가법령정보센터 API
 async function collectLawGoKr(env) {
     const OC = env?.LAW_GO_KR_OC;
-    debugLogs.push({ source: 'law.go.kr', hasApiKey: !!OC });
-    if (!OC) return [];
+    if (!OC) {
+        return { items: [], error: 'API 키 미설정 (LAW_GO_KR_OC)' };
+    }
 
     try {
-        const url = `https://www.law.go.kr/DRF/lawSearch.do?OC=${OC}&target=lsRvsn&type=XML&display=20`;
+        // 최근 법령 개정 정보 조회
+        const url = `https://www.law.go.kr/DRF/lawSearch.do?OC=${OC}&target=lsRvsn&type=XML&display=50`;
         const res = await fetch(url);
-        debugLogs.push({ source: 'law.go.kr', status: res.status });
-        if (!res.ok) return [];
+
+        if (!res.ok) {
+            return { items: [], error: `HTTP ${res.status}` };
+        }
 
         const xml = await res.text();
         const items = [];
+
+        // 법령 정보 추출
         const lawRegex = /<법령최신개정정보>[\s\S]*?<법령ID>(\d+)<\/법령ID>[\s\S]*?<법령명>(.*?)<\/법령명>[\s\S]*?<공포일자>(\d+)<\/공포일자>[\s\S]*?<\/법령최신개정정보>/g;
         let match;
 
         while ((match = lawRegex.exec(xml)) !== null) {
+            const lawId = match[1];
             const lawName = match[2].trim();
             const pubDate = match[3];
             const { matched, law } = isTargetLaw(lawName);
+
             if (matched) {
                 const item = {
-                    source: 'law.go.kr', type: '공포/시행',
-                    title: `${lawName} 개정`, law: law?.name || lawName,
+                    source: 'law.go.kr',
+                    type: '공포/시행',
+                    title: `${lawName} 개정`,
+                    law: law?.name || lawName,
                     pubDate: pubDate ? `${pubDate.substring(0, 4)}-${pubDate.substring(4, 6)}-${pubDate.substring(6, 8)}` : '',
-                    link: `https://www.law.go.kr/법령/${encodeURIComponent(lawName)}`, content: ''
+                    link: `https://www.law.go.kr/법령/${encodeURIComponent(lawName)}`,
+                    content: ''
                 };
                 item.importance = calculateImportance(item);
                 items.push(item);
             }
         }
-        return items;
+
+        return { items, error: null };
     } catch (e) {
-        debugLogs.push({ source: 'law.go.kr', error: e.message });
-        return [];
+        return { items: [], error: e.message };
     }
 }
 
 // 열린국회정보 API
 async function collectAssembly(env) {
     const apiKey = env?.ASSEMBLY_API_KEY;
-    debugLogs.push({ source: 'assembly', hasApiKey: !!apiKey });
-    if (!apiKey) return [];
+    if (!apiKey) {
+        return { items: [], error: 'API 키 미설정 (ASSEMBLY_API_KEY)' };
+    }
 
     try {
-        const url = `https://open.assembly.go.kr/portal/openapi/nzmimeepazxkubdpn?Key=${apiKey}&Type=json&pSize=30&AGE=22`;
+        // 22대 국회 발의 법률안 조회
+        const url = `https://open.assembly.go.kr/portal/openapi/nzmimeepazxkubdpn?Key=${apiKey}&Type=json&pSize=100&AGE=22`;
         const res = await fetch(url);
-        debugLogs.push({ source: 'assembly', status: res.status });
-        if (!res.ok) return [];
+
+        if (!res.ok) {
+            return { items: [], error: `HTTP ${res.status}` };
+        }
 
         const data = await res.json();
+
+        // API 오류 체크
+        if (data?.nzmimeepazxkubdpn?.[0]?.head?.[1]?.RESULT?.CODE !== 'INFO-000') {
+            const msg = data?.nzmimeepazxkubdpn?.[0]?.head?.[1]?.RESULT?.MESSAGE || 'API 오류';
+            return { items: [], error: msg };
+        }
+
         const rows = data?.nzmimeepazxkubdpn?.[1]?.row || [];
         const items = [];
 
         for (const row of rows) {
             const billName = row.BILL_NAME || '';
             const { matched, law } = isTargetLaw(billName);
+
             if (matched) {
                 const item = {
-                    source: 'assembly.go.kr', type: '발의법률안', title: billName,
-                    law: law?.name || '국회 법률안', pubDate: row.PROPOSE_DT || '',
+                    source: 'assembly.go.kr',
+                    type: '발의법률안',
+                    title: billName,
+                    law: law?.name || '국회 법률안',
+                    pubDate: row.PROPOSE_DT || '',
                     link: `https://likms.assembly.go.kr/bill/billDetail.do?billId=${row.BILL_ID || row.BILL_NO}`,
                     content: row.PROPOSER || ''
                 };
@@ -203,71 +139,26 @@ async function collectAssembly(env) {
                 items.push(item);
             }
         }
-        return items;
-    } catch (e) {
-        debugLogs.push({ source: 'assembly', error: e.message });
-        return [];
-    }
-}
 
-// 개인정보보호위원회 - 간소화
-async function collectPipc() {
-    try {
-        const res = await fetch('https://www.pipc.go.kr/np/cop/bbs/selectBoardList.do?bbsId=BS074&mCode=C020010000');
-        debugLogs.push({ source: 'pipc', status: res.status, ok: res.ok });
-        if (!res.ok) return [];
-        return []; // 일단 빈 배열 반환
+        return { items, error: null };
     } catch (e) {
-        debugLogs.push({ source: 'pipc', error: e.message });
-        return [];
-    }
-}
-
-// 과학기술정보통신부 - 간소화
-async function collectMsit() {
-    try {
-        const res = await fetch('https://www.msit.go.kr/bbs/list.do?sCode=user&mId=113&mPid=112');
-        debugLogs.push({ source: 'msit', status: res.status, ok: res.ok });
-        if (!res.ok) return [];
-        return [];
-    } catch (e) {
-        debugLogs.push({ source: 'msit', error: e.message });
-        return [];
-    }
-}
-
-// 금융위원회 - 간소화
-async function collectFsc() {
-    try {
-        const res = await fetch('https://www.fsc.go.kr/po040101');
-        debugLogs.push({ source: 'fsc', status: res.status, ok: res.ok });
-        if (!res.ok) return [];
-        return [];
-    } catch (e) {
-        debugLogs.push({ source: 'fsc', error: e.message });
-        return [];
+        return { items: [], error: e.message };
     }
 }
 
 // Cloudflare Pages Functions Handler
 export async function onRequest(context) {
     const { env } = context;
-    debugLogs = []; // 리셋
-    debugLogs.push({ start: new Date().toISOString() });
 
     try {
         const stats = {};
         const errors = [];
+        const apiStatus = {};
 
-        // 모든 수집기를 병렬로 실행
+        // API 기반 수집기만 실행
         const collectors = [
             { name: '국가법령정보센터', fn: () => collectLawGoKr(env) },
-            { name: '열린국회정보', fn: () => collectAssembly(env) },
-            { name: '고용노동부', fn: collectMoel },
-            { name: '공정거래위원회', fn: collectFtc },
-            { name: '개인정보보호위원회', fn: collectPipc },
-            { name: '과학기술정보통신부', fn: collectMsit },
-            { name: '금융위원회', fn: collectFsc }
+            { name: '열린국회정보', fn: () => collectAssembly(env) }
         ];
 
         const results = await Promise.allSettled(collectors.map(c => c.fn()));
@@ -276,8 +167,12 @@ export async function onRequest(context) {
         results.forEach((result, i) => {
             const name = collectors[i].name;
             if (result.status === 'fulfilled') {
-                stats[name] = result.value.length;
-                items.push(...result.value);
+                const { items: collectedItems, error } = result.value;
+                stats[name] = collectedItems.length;
+                items.push(...collectedItems);
+                if (error) {
+                    apiStatus[name] = error;
+                }
             } else {
                 errors.push({ source: name, error: result.reason?.message || 'Unknown' });
                 stats[name] = 0;
@@ -300,16 +195,16 @@ export async function onRequest(context) {
             totalItems: uniqueItems.length,
             items: uniqueItems,
             stats,
+            apiStatus: Object.keys(apiStatus).length > 0 ? apiStatus : undefined,
             errors: errors.length > 0 ? errors : undefined,
-            debug: debugLogs // 디버그 정보 포함
+            note: 'API 전용 모드 (국가법령정보센터 + 열린국회정보)'
         }), {
             headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
         });
     } catch (error) {
         return new Response(JSON.stringify({
             success: false,
-            error: error.message,
-            debug: debugLogs
+            error: error.message
         }), {
             status: 500,
             headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
