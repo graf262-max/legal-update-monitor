@@ -1,4 +1,4 @@
-// Cloudflare Pages Function - API 전용 (국가법령정보센터)
+// Cloudflare Pages Function - API 전용 (국가법령정보센터 + 열린국회정보)
 // 경로: /api/daily-brief
 
 // 관리 대상 법률 (14개)
@@ -19,6 +19,16 @@ const TARGET_LAWS = [
     { name: '저작권법', keywords: ['저작권법'] }
 ];
 
+function isTargetLaw(title) {
+    const normalized = title.replace(/\s+/g, '');
+    for (const law of TARGET_LAWS) {
+        for (const kw of law.keywords) {
+            if (normalized.includes(kw.replace(/\s+/g, ''))) return { matched: true, law };
+        }
+    }
+    return { matched: false, law: null };
+}
+
 function calculateImportance(item) {
     let score = 1;
     const text = `${item.title || ''} ${item.content || ''}`;
@@ -28,7 +38,8 @@ function calculateImportance(item) {
     if (text.includes('입법예고')) score += 1;
     if (text.includes('시행규칙')) score -= 2;
     if (text.includes('직제')) score -= 5;
-    score += 2; // law.go.kr 소스 보너스
+    if ((item.source || '').includes('law.go.kr')) score += 2;
+    else if ((item.source || '').includes('assembly.go.kr')) score += 2;
     return Math.min(5, Math.max(1, Math.round(score / 2)));
 }
 
@@ -89,6 +100,65 @@ async function collectLawGoKr(env) {
     }
 }
 
+// 열린국회정보 API - 발의법률안
+async function collectAssembly(env) {
+    const apiKey = env?.ASSEMBLY_API_KEY;
+    if (!apiKey) {
+        return { items: [], error: 'API 키 미설정 (ASSEMBLY_API_KEY)' };
+    }
+
+    try {
+        // KEY를 대문자로, AGE=22 (22대 국회)
+        const url = `https://open.assembly.go.kr/portal/openapi/nzmimeepazxkubdpn?KEY=${apiKey}&Type=json&pIndex=1&pSize=100&AGE=22`;
+        const res = await fetch(url);
+
+        if (!res.ok) {
+            return { items: [], error: `HTTP ${res.status}` };
+        }
+
+        const text = await res.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            return { items: [], error: `JSON 파싱 실패: ${text.substring(0, 100)}` };
+        }
+
+        // API 오류 체크
+        const resultCode = data?.nzmimeepazxkubdpn?.[0]?.head?.[1]?.RESULT?.CODE;
+        if (resultCode && resultCode !== 'INFO-000') {
+            const msg = data?.nzmimeepazxkubdpn?.[0]?.head?.[1]?.RESULT?.MESSAGE || 'API 오류';
+            return { items: [], error: `${resultCode}: ${msg}` };
+        }
+
+        const rows = data?.nzmimeepazxkubdpn?.[1]?.row || [];
+        const items = [];
+
+        for (const row of rows) {
+            const billName = row.BILL_NAME || '';
+            const { matched, law } = isTargetLaw(billName);
+
+            if (matched) {
+                const item = {
+                    source: 'assembly.go.kr',
+                    type: '발의법률안',
+                    title: billName,
+                    law: law?.name || '국회 법률안',
+                    pubDate: row.PROPOSE_DT || '',
+                    link: row.DETAIL_LINK || `https://likms.assembly.go.kr/bill/billDetail.do?billId=${row.BILL_ID}`,
+                    content: row.PROPOSER || ''
+                };
+                item.importance = calculateImportance(item);
+                items.push(item);
+            }
+        }
+
+        return { items, error: null };
+    } catch (e) {
+        return { items: [], error: e.message };
+    }
+}
+
 // Cloudflare Pages Functions Handler
 export async function onRequest(context) {
     const { env } = context;
@@ -96,19 +166,24 @@ export async function onRequest(context) {
     try {
         const stats = {};
         const apiStatus = {};
+        const allItems = [];
 
-        // 국가법령정보센터만 사용
-        const result = await collectLawGoKr(env);
-        stats['국가법령정보센터'] = result.items.length;
-        if (result.error) {
-            apiStatus['국가법령정보센터'] = result.error;
-        }
+        // 국가법령정보센터
+        const lawResult = await collectLawGoKr(env);
+        stats['국가법령정보센터'] = lawResult.items.length;
+        if (lawResult.error) apiStatus['국가법령정보센터'] = lawResult.error;
+        allItems.push(...lawResult.items);
+
+        // 열린국회정보
+        const assemblyResult = await collectAssembly(env);
+        stats['열린국회정보'] = assemblyResult.items.length;
+        if (assemblyResult.error) apiStatus['열린국회정보'] = assemblyResult.error;
+        allItems.push(...assemblyResult.items);
 
         // 중요도순 정렬 & 중복 제거
-        const items = result.items;
-        items.sort((a, b) => b.importance - a.importance);
+        allItems.sort((a, b) => b.importance - a.importance);
         const seen = new Set();
-        const uniqueItems = items.filter(item => {
+        const uniqueItems = allItems.filter(item => {
             const key = item.title.toLowerCase();
             if (seen.has(key)) return false;
             seen.add(key);
@@ -122,7 +197,7 @@ export async function onRequest(context) {
             items: uniqueItems,
             stats,
             apiStatus: Object.keys(apiStatus).length > 0 ? apiStatus : undefined,
-            note: '국가법령정보센터 API (2024년 이후 개정 법령)'
+            note: 'API 전용 모드 (국가법령정보센터 + 열린국회정보)'
         }), {
             headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
         });
