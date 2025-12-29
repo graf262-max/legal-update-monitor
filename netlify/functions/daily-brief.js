@@ -57,6 +57,118 @@ function calculateImportance(item) {
     return Math.min(5, Math.max(1, Math.round(score / 2)));
 }
 
+// 국가법령정보센터 API 수집
+async function collectLawGoKr() {
+    const OC = process.env.LAW_GO_KR_OC;
+    if (!OC) {
+        console.log('[law.go.kr] API 키 없음 (건너뜀)');
+        return [];
+    }
+
+    try {
+        const items = [];
+
+        // 최근 입법예고 조회
+        const url = `https://www.law.go.kr/DRF/lawSearch.do?OC=${OC}&target=lsRvsn&type=XML&display=20`;
+        const res = await fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LegalMonitor/1.0)' }
+        });
+
+        if (!res.ok) {
+            console.log('[law.go.kr] Response not ok:', res.status);
+            return [];
+        }
+
+        const xml = await res.text();
+
+        // XML에서 법률 정보 추출
+        const lawRegex = /<법령최신개정정보>[\s\S]*?<법령ID>(\d+)<\/법령ID>[\s\S]*?<법령명>(.*?)<\/법령명>[\s\S]*?<공포일자>(\d+)<\/공포일자>[\s\S]*?<\/법령최신개정정보>/g;
+        let match;
+
+        while ((match = lawRegex.exec(xml)) !== null) {
+            const lawId = match[1];
+            const lawName = match[2].trim();
+            const pubDate = match[3];
+
+            const { matched, law } = isTargetLaw(lawName);
+
+            if (matched) {
+                const item = {
+                    source: 'law.go.kr',
+                    type: '공포/시행',
+                    title: `${lawName} 개정`,
+                    law: law ? law.name : lawName,
+                    pubDate: pubDate ? `${pubDate.substring(0, 4)}-${pubDate.substring(4, 6)}-${pubDate.substring(6, 8)}` : '',
+                    link: `https://www.law.go.kr/법령/${encodeURIComponent(lawName)}`,
+                    content: ''
+                };
+                item.importance = calculateImportance(item);
+                items.push(item);
+            }
+        }
+
+        console.log('[law.go.kr] Collected:', items.length);
+        return items;
+    } catch (e) {
+        console.error('[law.go.kr] Error:', e.message);
+        return [];
+    }
+}
+
+// 열린국회정보 API 수집
+async function collectAssembly() {
+    const apiKey = process.env.ASSEMBLY_API_KEY;
+    if (!apiKey) {
+        console.log('[assembly] API 키 없음 (건너뜀)');
+        return [];
+    }
+
+    try {
+        const items = [];
+
+        // 최근 발의 법률안 조회 (nzmimeepazxkubdpn = 발의법률안)
+        const url = `https://open.assembly.go.kr/portal/openapi/nzmimeepazxkubdpn?Key=${apiKey}&Type=json&pSize=30&AGE=22`;
+        const res = await fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LegalMonitor/1.0)' }
+        });
+
+        if (!res.ok) {
+            console.log('[assembly] Response not ok:', res.status);
+            return [];
+        }
+
+        const data = await res.json();
+        const rows = data?.nzmimeepazxkubdpn?.[1]?.row || [];
+
+        for (const row of rows) {
+            const billName = row.BILL_NAME || '';
+            const billNo = row.BILL_NO || '';
+
+            const { matched, law } = isTargetLaw(billName);
+
+            if (matched) {
+                const item = {
+                    source: 'assembly.go.kr',
+                    type: '발의법률안',
+                    title: billName,
+                    law: law ? law.name : '국회 법률안',
+                    pubDate: row.PROPOSE_DT || '',
+                    link: `https://likms.assembly.go.kr/bill/billDetail.do?billId=${row.BILL_ID || billNo}`,
+                    content: row.PROPOSER || ''
+                };
+                item.importance = calculateImportance(item);
+                items.push(item);
+            }
+        }
+
+        console.log('[assembly] Collected:', items.length);
+        return items;
+    } catch (e) {
+        console.error('[assembly] Error:', e.message);
+        return [];
+    }
+}
+
 // 고용노동부 RSS 수집
 async function collectMoel() {
     try {
@@ -282,6 +394,26 @@ exports.handler = async function (event, context) {
         const items = [];
         const stats = {};
         const errors = [];
+
+        // 국가법령정보센터 (API 키 필요)
+        try {
+            const data = await collectLawGoKr();
+            stats['국가법령정보센터'] = data.length;
+            items.push(...data);
+        } catch (e) {
+            errors.push({ source: '국가법령정보센터', error: e.message });
+            stats['국가법령정보센터'] = 0;
+        }
+
+        // 열린국회정보 (API 키 필요)
+        try {
+            const data = await collectAssembly();
+            stats['열린국회정보'] = data.length;
+            items.push(...data);
+        } catch (e) {
+            errors.push({ source: '열린국회정보', error: e.message });
+            stats['열린국회정보'] = 0;
+        }
 
         // 고용노동부
         try {
