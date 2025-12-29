@@ -1,4 +1,4 @@
-// Cloudflare Pages Function - API 전용 (국가법령정보센터 + 열린국회정보)
+// Cloudflare Pages Function - API 전용 (국가법령정보센터)
 // 경로: /api/daily-brief
 
 // 관리 대상 법률 (14개)
@@ -19,32 +19,20 @@ const TARGET_LAWS = [
     { name: '저작권법', keywords: ['저작권법'] }
 ];
 
-function isTargetLaw(title) {
-    const normalized = title.replace(/\s+/g, '');
-    for (const law of TARGET_LAWS) {
-        for (const kw of law.keywords) {
-            if (normalized.includes(kw.replace(/\s+/g, ''))) return { matched: true, law };
-        }
-    }
-    return { matched: false, law: null };
-}
-
 function calculateImportance(item) {
     let score = 1;
     const text = `${item.title || ''} ${item.content || ''}`;
     if (text.includes('공포')) score += 3;
     if (text.includes('시행일')) score += 3;
-    if (text.includes('본회의 통과')) score += 3;
     if (text.includes('개정')) score += 2;
     if (text.includes('입법예고')) score += 1;
     if (text.includes('시행규칙')) score -= 2;
     if (text.includes('직제')) score -= 5;
-    if ((item.source || '').includes('law.go.kr')) score += 2;
-    else if ((item.source || '').includes('assembly.go.kr')) score += 2;
+    score += 2; // law.go.kr 소스 보너스
     return Math.min(5, Math.max(1, Math.round(score / 2)));
 }
 
-// 국가법령정보센터 API
+// 국가법령정보센터 API - 법령 검색
 async function collectLawGoKr(env) {
     const OC = env?.LAW_GO_KR_OC;
     if (!OC) {
@@ -52,95 +40,50 @@ async function collectLawGoKr(env) {
     }
 
     try {
-        // 최근 법령 개정 정보 조회
-        const url = `https://www.law.go.kr/DRF/lawSearch.do?OC=${OC}&target=lsRvsn&type=XML&display=50`;
-        const res = await fetch(url);
+        const allItems = [];
 
-        if (!res.ok) {
-            return { items: [], error: `HTTP ${res.status}` };
-        }
+        // 각 관리 대상 법률에 대해 검색
+        for (const targetLaw of TARGET_LAWS) {
+            const query = encodeURIComponent(targetLaw.keywords[0]);
+            const url = `https://www.law.go.kr/DRF/lawSearch.do?OC=${OC}&target=law&type=XML&display=10&query=${query}`;
 
-        const xml = await res.text();
-        const items = [];
+            try {
+                const res = await fetch(url);
+                if (!res.ok) continue;
 
-        // 법령 정보 추출
-        const lawRegex = /<법령최신개정정보>[\s\S]*?<법령ID>(\d+)<\/법령ID>[\s\S]*?<법령명>(.*?)<\/법령명>[\s\S]*?<공포일자>(\d+)<\/공포일자>[\s\S]*?<\/법령최신개정정보>/g;
-        let match;
+                const xml = await res.text();
 
-        while ((match = lawRegex.exec(xml)) !== null) {
-            const lawId = match[1];
-            const lawName = match[2].trim();
-            const pubDate = match[3];
-            const { matched, law } = isTargetLaw(lawName);
+                // 법률 정보 추출
+                const lawRegex = /<law[^>]*>[\s\S]*?<법령명한글><!\[CDATA\[(.*?)\]\]><\/법령명한글>[\s\S]*?<공포일자>(\d+)<\/공포일자>[\s\S]*?<제개정구분명>(.*?)<\/제개정구분명>[\s\S]*?<법령상세링크>(.*?)<\/법령상세링크>[\s\S]*?<\/law>/g;
+                let match;
 
-            if (matched) {
-                const item = {
-                    source: 'law.go.kr',
-                    type: '공포/시행',
-                    title: `${lawName} 개정`,
-                    law: law?.name || lawName,
-                    pubDate: pubDate ? `${pubDate.substring(0, 4)}-${pubDate.substring(4, 6)}-${pubDate.substring(6, 8)}` : '',
-                    link: `https://www.law.go.kr/법령/${encodeURIComponent(lawName)}`,
-                    content: ''
-                };
-                item.importance = calculateImportance(item);
-                items.push(item);
+                while ((match = lawRegex.exec(xml)) !== null) {
+                    const lawName = match[1].trim();
+                    const pubDate = match[2];
+                    const changeType = match[3];
+                    const link = match[4].replace(/&amp;/g, '&');
+
+                    // 2024년 이후 개정된 법령만 포함
+                    if (pubDate && parseInt(pubDate.substring(0, 4)) >= 2024) {
+                        const item = {
+                            source: 'law.go.kr',
+                            type: changeType || '법령',
+                            title: lawName,
+                            law: targetLaw.name,
+                            pubDate: `${pubDate.substring(0, 4)}-${pubDate.substring(4, 6)}-${pubDate.substring(6, 8)}`,
+                            link: `https://www.law.go.kr${link}`,
+                            content: ''
+                        };
+                        item.importance = calculateImportance(item);
+                        allItems.push(item);
+                    }
+                }
+            } catch (e) {
+                console.error(`[law.go.kr] ${targetLaw.name} error:`, e);
             }
         }
 
-        return { items, error: null };
-    } catch (e) {
-        return { items: [], error: e.message };
-    }
-}
-
-// 열린국회정보 API
-async function collectAssembly(env) {
-    const apiKey = env?.ASSEMBLY_API_KEY;
-    if (!apiKey) {
-        return { items: [], error: 'API 키 미설정 (ASSEMBLY_API_KEY)' };
-    }
-
-    try {
-        // 22대 국회 발의 법률안 조회
-        const url = `https://open.assembly.go.kr/portal/openapi/nzmimeepazxkubdpn?Key=${apiKey}&Type=json&pSize=100&AGE=22`;
-        const res = await fetch(url);
-
-        if (!res.ok) {
-            return { items: [], error: `HTTP ${res.status}` };
-        }
-
-        const data = await res.json();
-
-        // API 오류 체크
-        if (data?.nzmimeepazxkubdpn?.[0]?.head?.[1]?.RESULT?.CODE !== 'INFO-000') {
-            const msg = data?.nzmimeepazxkubdpn?.[0]?.head?.[1]?.RESULT?.MESSAGE || 'API 오류';
-            return { items: [], error: msg };
-        }
-
-        const rows = data?.nzmimeepazxkubdpn?.[1]?.row || [];
-        const items = [];
-
-        for (const row of rows) {
-            const billName = row.BILL_NAME || '';
-            const { matched, law } = isTargetLaw(billName);
-
-            if (matched) {
-                const item = {
-                    source: 'assembly.go.kr',
-                    type: '발의법률안',
-                    title: billName,
-                    law: law?.name || '국회 법률안',
-                    pubDate: row.PROPOSE_DT || '',
-                    link: `https://likms.assembly.go.kr/bill/billDetail.do?billId=${row.BILL_ID || row.BILL_NO}`,
-                    content: row.PROPOSER || ''
-                };
-                item.importance = calculateImportance(item);
-                items.push(item);
-            }
-        }
-
-        return { items, error: null };
+        return { items: allItems, error: null };
     } catch (e) {
         return { items: [], error: e.message };
     }
@@ -152,34 +95,17 @@ export async function onRequest(context) {
 
     try {
         const stats = {};
-        const errors = [];
         const apiStatus = {};
 
-        // API 기반 수집기만 실행
-        const collectors = [
-            { name: '국가법령정보센터', fn: () => collectLawGoKr(env) },
-            { name: '열린국회정보', fn: () => collectAssembly(env) }
-        ];
-
-        const results = await Promise.allSettled(collectors.map(c => c.fn()));
-
-        const items = [];
-        results.forEach((result, i) => {
-            const name = collectors[i].name;
-            if (result.status === 'fulfilled') {
-                const { items: collectedItems, error } = result.value;
-                stats[name] = collectedItems.length;
-                items.push(...collectedItems);
-                if (error) {
-                    apiStatus[name] = error;
-                }
-            } else {
-                errors.push({ source: name, error: result.reason?.message || 'Unknown' });
-                stats[name] = 0;
-            }
-        });
+        // 국가법령정보센터만 사용
+        const result = await collectLawGoKr(env);
+        stats['국가법령정보센터'] = result.items.length;
+        if (result.error) {
+            apiStatus['국가법령정보센터'] = result.error;
+        }
 
         // 중요도순 정렬 & 중복 제거
+        const items = result.items;
         items.sort((a, b) => b.importance - a.importance);
         const seen = new Set();
         const uniqueItems = items.filter(item => {
@@ -196,8 +122,7 @@ export async function onRequest(context) {
             items: uniqueItems,
             stats,
             apiStatus: Object.keys(apiStatus).length > 0 ? apiStatus : undefined,
-            errors: errors.length > 0 ? errors : undefined,
-            note: 'API 전용 모드 (국가법령정보센터 + 열린국회정보)'
+            note: '국가법령정보센터 API (2024년 이후 개정 법령)'
         }), {
             headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
         });
