@@ -19,6 +19,10 @@ const TARGET_LAWS = [
     { name: '저작권법', keywords: ['저작권법'] }
 ];
 
+// 제외할 키워드 (상법/민법과 혼동되는 법률)
+const EXCLUDE_KEYWORDS = ['보상', '난민', '이탈주민', '북한이탈'];
+
+
 function isTargetLaw(title) {
     const normalized = title.replace(/\s+/g, '');
     for (const law of TARGET_LAWS) {
@@ -85,6 +89,10 @@ async function collectLawGoKr(env) {
                     );
 
                     if (pubDate && pubDateObj >= sixMonthsAgo) {
+                        // 제외 키워드가 포함된 법령은 건너뛰기
+                        const shouldExclude = EXCLUDE_KEYWORDS.some(kw => lawName.includes(kw));
+                        if (shouldExclude) continue;
+
                         const item = {
                             source: 'law.go.kr',
                             type: changeType || '법령',
