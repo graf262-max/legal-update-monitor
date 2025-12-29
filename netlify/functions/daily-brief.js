@@ -391,79 +391,36 @@ exports.handler = async function (event, context) {
     console.log('[daily-brief] Start:', new Date().toISOString());
 
     try {
-        const items = [];
         const stats = {};
         const errors = [];
 
-        // 국가법령정보센터 (API 키 필요)
-        try {
-            const data = await collectLawGoKr();
-            stats['국가법령정보센터'] = data.length;
-            items.push(...data);
-        } catch (e) {
-            errors.push({ source: '국가법령정보센터', error: e.message });
-            stats['국가법령정보센터'] = 0;
-        }
+        // 모든 수집기를 병렬로 실행 (타임아웃 방지)
+        const collectors = [
+            { name: '국가법령정보센터', fn: collectLawGoKr },
+            { name: '열린국회정보', fn: collectAssembly },
+            { name: '고용노동부', fn: collectMoel },
+            { name: '공정거래위원회', fn: collectFtc },
+            { name: '개인정보보호위원회', fn: collectPipc },
+            { name: '과학기술정보통신부', fn: collectMsit },
+            { name: '금융위원회', fn: collectFsc }
+        ];
 
-        // 열린국회정보 (API 키 필요)
-        try {
-            const data = await collectAssembly();
-            stats['열린국회정보'] = data.length;
-            items.push(...data);
-        } catch (e) {
-            errors.push({ source: '열린국회정보', error: e.message });
-            stats['열린국회정보'] = 0;
-        }
+        const results = await Promise.allSettled(
+            collectors.map(c => c.fn())
+        );
 
-        // 고용노동부
-        try {
-            const data = await collectMoel();
-            stats['고용노동부'] = data.length;
-            items.push(...data);
-        } catch (e) {
-            errors.push({ source: '고용노동부', error: e.message });
-            stats['고용노동부'] = 0;
-        }
-
-        // 공정거래위원회
-        try {
-            const data = await collectFtc();
-            stats['공정거래위원회'] = data.length;
-            items.push(...data);
-        } catch (e) {
-            errors.push({ source: '공정거래위원회', error: e.message });
-            stats['공정거래위원회'] = 0;
-        }
-
-        // 개인정보보호위원회
-        try {
-            const data = await collectPipc();
-            stats['개인정보보호위원회'] = data.length;
-            items.push(...data);
-        } catch (e) {
-            errors.push({ source: '개인정보보호위원회', error: e.message });
-            stats['개인정보보호위원회'] = 0;
-        }
-
-        // 과학기술정보통신부
-        try {
-            const data = await collectMsit();
-            stats['과학기술정보통신부'] = data.length;
-            items.push(...data);
-        } catch (e) {
-            errors.push({ source: '과학기술정보통신부', error: e.message });
-            stats['과학기술정보통신부'] = 0;
-        }
-
-        // 금융위원회
-        try {
-            const data = await collectFsc();
-            stats['금융위원회'] = data.length;
-            items.push(...data);
-        } catch (e) {
-            errors.push({ source: '금융위원회', error: e.message });
-            stats['금융위원회'] = 0;
-        }
+        const items = [];
+        results.forEach((result, i) => {
+            const name = collectors[i].name;
+            if (result.status === 'fulfilled') {
+                stats[name] = result.value.length;
+                items.push(...result.value);
+            } else {
+                console.error(`[${name}] Error:`, result.reason);
+                errors.push({ source: name, error: result.reason?.message || 'Unknown error' });
+                stats[name] = 0;
+            }
+        });
 
         // 중요도순 정렬 & 중복 제거
         items.sort((a, b) => b.importance - a.importance);
