@@ -453,18 +453,78 @@ async function collectFsc() {
     }
 }
 
-// ====== 보도자료 수집기 ======
+// ====== 보도자료 수집기 (최근 7일) ======
 
-// 공정거래위원회 보도자료
-async function collectFtcPress() {
+// 7일 이내 날짜인지 확인
+function isWithin7Days(dateStr) {
+    if (!dateStr) return true; // 날짜 없으면 일단 포함
     try {
-        const res = await fetch('https://www.ftc.go.kr/www/selectBbsNttList.do?bordCd=3&key=12', {
+        // YYYY.MM.DD 또는 YYYY-MM-DD 형식 처리
+        const normalized = dateStr.replace(/\./g, '-').trim();
+        const date = new Date(normalized);
+        if (isNaN(date.getTime())) return true;
+
+        const now = new Date();
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        return date >= sevenDaysAgo;
+    } catch (e) {
+        return true;
+    }
+}
+
+// 고용노동부 보도자료
+async function collectMoelPress() {
+    try {
+        const res = await fetch('https://www.moel.go.kr/news/enews/report/enewsList.do', {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
         });
         if (!res.ok) return [];
 
         const html = await res.text();
         const items = [];
+
+        // 제목과 날짜 패턴
+        const rowRegex = /<tr[^>]*>[\s\S]*?<a[^>]*href="([^"]*)"[^>]*>([^<]+)<\/a>[\s\S]*?<td[^>]*>(\d{4}\.\d{2}\.\d{2})<\/td>/g;
+        let match;
+
+        while ((match = rowRegex.exec(html)) !== null) {
+            const href = match[1];
+            const title = match[2].trim();
+            const dateStr = match[3];
+
+            if (!isWithin7Days(dateStr)) continue;
+            if (shouldExclude(title)) continue;
+
+            const { matched, law } = isTargetLaw(title);
+            if (matched) {
+                items.push({
+                    source: 'moel.go.kr', type: '보도자료', title,
+                    law: law.name, pubDate: dateStr,
+                    link: href.startsWith('http') ? href : `https://www.moel.go.kr${href}`,
+                    content: '', importance: 3
+                });
+            }
+        }
+        console.log('[moel-press] Collected:', items.length);
+        return items;
+    } catch (e) {
+        console.error('[moel-press] Error:', e.message);
+        return [];
+    }
+}
+
+// 공정거래위원회 보도자료
+async function collectFtcPress() {
+    try {
+        const res = await fetch('https://www.ftc.go.kr/www/selectBbsNttList.do?bordCd=3&key=12&searchCtgry=01,02', {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        });
+        if (!res.ok) return [];
+
+        const html = await res.text();
+        const items = [];
+
+        // nttSn과 제목, 날짜 추출
         const linkRegex = /selectBbsNttView\.do[^"']*nttSn=(\d+)/g;
         const matches = [...html.matchAll(linkRegex)];
         const seen = new Set();
@@ -475,16 +535,23 @@ async function collectFtcPress() {
             seen.add(nttSn);
 
             const idx = html.indexOf(m[0]);
-            const surroundingText = html.substring(Math.max(0, idx - 300), idx + 50);
-            const titleMatch = surroundingText.match(/>([^<]{15,})</) || surroundingText.match(/title="([^"]{15,})"/);
+            const surroundingText = html.substring(Math.max(0, idx - 400), idx + 100);
+
+            // 제목 추출
+            const titleMatch = surroundingText.match(/>([^<]{10,100})</);
             const title = titleMatch ? titleMatch[1].trim() : '';
-            if (!title || shouldExclude(title)) continue;
+
+            // 날짜 추출 (YYYY.MM.DD 또는 YYYY-MM-DD)
+            const dateMatch = surroundingText.match(/(\d{4}[\.\-]\d{2}[\.\-]\d{2})/);
+            const dateStr = dateMatch ? dateMatch[1] : '';
+
+            if (!title || !isWithin7Days(dateStr) || shouldExclude(title)) continue;
 
             const { matched, law } = isTargetLaw(title);
             if (matched) {
                 items.push({
                     source: 'ftc.go.kr', type: '보도자료', title,
-                    law: law.name, pubDate: '',
+                    law: law.name, pubDate: dateStr,
                     link: `https://www.ftc.go.kr/www/selectBbsNttView.do?key=12&bordCd=3&nttSn=${nttSn}`,
                     content: '', importance: 3
                 });
@@ -518,16 +585,21 @@ async function collectPipcPress() {
             seen.add(nttId);
 
             const idx = html.indexOf(m[0]);
-            const surroundingText = html.substring(Math.max(0, idx - 300), idx + 50);
-            const titleMatch = surroundingText.match(/>([^<]{15,})</) || surroundingText.match(/title="([^"]{15,})"/);
+            const surroundingText = html.substring(Math.max(0, idx - 400), idx + 100);
+
+            const titleMatch = surroundingText.match(/>([^<]{10,100})</);
             const title = titleMatch ? titleMatch[1].trim() : '';
-            if (!title || shouldExclude(title)) continue;
+
+            const dateMatch = surroundingText.match(/(\d{4}[\.\-]\d{2}[\.\-]\d{2})/);
+            const dateStr = dateMatch ? dateMatch[1] : '';
+
+            if (!title || !isWithin7Days(dateStr) || shouldExclude(title)) continue;
 
             const { matched, law } = isTargetLaw(title);
             if (matched) {
                 items.push({
                     source: 'pipc.go.kr', type: '보도자료', title,
-                    law: law.name, pubDate: '',
+                    law: law.name, pubDate: dateStr,
                     link: `https://www.pipc.go.kr/np/cop/bbs/selectBoardArticle.do?bbsId=BS074&mCode=C020010000&nttId=${nttId}`,
                     content: '', importance: 3
                 });
@@ -537,6 +609,54 @@ async function collectPipcPress() {
         return items;
     } catch (e) {
         console.error('[pipc-press] Error:', e.message);
+        return [];
+    }
+}
+
+// 과학기술정보통신부 보도자료
+async function collectMsitPress() {
+    try {
+        const res = await fetch('https://www.msit.go.kr/bbs/list.do?sCode=user&mPid=208&mId=307', {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        });
+        if (!res.ok) return [];
+
+        const html = await res.text();
+        const items = [];
+        const linkRegex = /view\.do[^"']*nttSeqNo=(\d+)/g;
+        const matches = [...html.matchAll(linkRegex)];
+        const seen = new Set();
+
+        for (const m of matches) {
+            const nttSeqNo = m[1];
+            if (seen.has(nttSeqNo)) continue;
+            seen.add(nttSeqNo);
+
+            const idx = html.indexOf(m[0]);
+            const surroundingText = html.substring(Math.max(0, idx - 400), idx + 100);
+
+            const titleMatch = surroundingText.match(/>([^<]{10,100})</);
+            const title = titleMatch ? titleMatch[1].trim() : '';
+
+            const dateMatch = surroundingText.match(/(\d{4}[\.\-]\d{2}[\.\-]\d{2})/);
+            const dateStr = dateMatch ? dateMatch[1] : '';
+
+            if (!title || !isWithin7Days(dateStr) || shouldExclude(title)) continue;
+
+            const { matched, law } = isTargetLaw(title);
+            if (matched) {
+                items.push({
+                    source: 'msit.go.kr', type: '보도자료', title,
+                    law: law.name, pubDate: dateStr,
+                    link: `https://www.msit.go.kr/bbs/view.do?sCode=user&mPid=208&mId=307&nttSeqNo=${nttSeqNo}`,
+                    content: '', importance: 3
+                });
+            }
+        }
+        console.log('[msit-press] Collected:', items.length);
+        return items;
+    } catch (e) {
+        console.error('[msit-press] Error:', e.message);
         return [];
     }
 }
@@ -561,16 +681,21 @@ async function collectFscPress() {
             seen.add(bbsSeq);
 
             const idx = html.indexOf(m[0]);
-            const surroundingText = html.substring(Math.max(0, idx - 300), idx + 50);
-            const titleMatch = surroundingText.match(/>([^<]{15,})</) || surroundingText.match(/title="([^"]{15,})"/);
+            const surroundingText = html.substring(Math.max(0, idx - 400), idx + 100);
+
+            const titleMatch = surroundingText.match(/>([^<]{10,100})</);
             const title = titleMatch ? titleMatch[1].trim() : '';
-            if (!title || shouldExclude(title)) continue;
+
+            const dateMatch = surroundingText.match(/(\d{4}[\.\-]\d{2}[\.\-]\d{2})/);
+            const dateStr = dateMatch ? dateMatch[1] : '';
+
+            if (!title || !isWithin7Days(dateStr) || shouldExclude(title)) continue;
 
             const { matched, law } = isTargetLaw(title);
             if (matched) {
                 items.push({
                     source: 'fsc.go.kr', type: '보도자료', title,
-                    law: law.name, pubDate: '',
+                    law: law.name, pubDate: dateStr,
                     link: `https://www.fsc.go.kr/no010101?bbsSeq=${bbsSeq}`,
                     content: '', importance: 3
                 });
@@ -583,6 +708,7 @@ async function collectFscPress() {
         return [];
     }
 }
+
 
 // Netlify Functions Handler
 exports.handler = async function (event, context) {
@@ -602,9 +728,11 @@ exports.handler = async function (event, context) {
             { name: '개인정보보호위원회', fn: collectPipc },
             { name: '과학기술정보통신부', fn: collectMsit },
             { name: '금융위원회', fn: collectFsc },
-            // 보도자료
+            // 보도자료 (최근 7일)
+            { name: '고용노동부 보도', fn: collectMoelPress },
             { name: '공정위 보도', fn: collectFtcPress },
             { name: '개인정보위 보도', fn: collectPipcPress },
+            { name: '과기부 보도', fn: collectMsitPress },
             { name: '금융위 보도', fn: collectFscPress }
         ];
 
