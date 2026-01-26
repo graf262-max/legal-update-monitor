@@ -529,15 +529,20 @@ async function collectFtcPress() {
         const res = await fetch('https://www.ftc.go.kr/www/selectBbsNttList.do?bordCd=3&key=12&searchCtgry=01,02', {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
         });
-        if (!res.ok) return [];
+        if (!res.ok) {
+            console.log('[ftc-press] Response not ok:', res.status);
+            return [];
+        }
 
         const html = await res.text();
         const items = [];
 
-        // nttSn과 제목, 날짜 추출
+        // nttSn 추출 - 링크에서
         const linkRegex = /selectBbsNttView\.do[^"']*nttSn=(\d+)/g;
         const matches = [...html.matchAll(linkRegex)];
         const seen = new Set();
+
+        console.log('[ftc-press] Found links:', matches.length);
 
         for (const m of matches) {
             const nttSn = m[1];
@@ -545,26 +550,25 @@ async function collectFtcPress() {
             seen.add(nttSn);
 
             const idx = html.indexOf(m[0]);
-            const surroundingText = html.substring(Math.max(0, idx - 400), idx + 100);
+            // 링크 앞뒤 더 넓은 범위에서 제목 추출
+            const surroundingText = html.substring(Math.max(0, idx - 100), idx + 300);
 
-            // 제목 추출
-            const titleMatch = surroundingText.match(/>([^<]{10,100})</);
+            // 제목 추출 - 링크 텍스트 또는 주변 텍스트
+            const titleMatch = surroundingText.match(/>\s*([^<]{5,150})\s*<\/a>/) ||
+                surroundingText.match(/title="([^"]{5,150})"/) ||
+                surroundingText.match(/>([^<]{5,150})</);
             const title = titleMatch ? titleMatch[1].trim() : '';
 
-            // 날짜 추출 (YYYY.MM.DD 또는 YYYY-MM-DD)
-            const dateMatch = surroundingText.match(/(\d{4}[\.\-]\d{2}[\.\-]\d{2})/);
-            const dateStr = dateMatch ? dateMatch[1] : '';
-
-            if (!title || !isWithin7Days(dateStr) || shouldExclude(title)) continue;
+            if (!title || title.length < 5 || shouldExclude(title)) continue;
 
             // 공정거래 관련 키워드 또는 모니터링 대상 법률 매칭
-            const isFtc = /공정거래|독점|약관|하도급|가맹|표시광고|소비자|전자상거래|담합/.test(title);
+            const isFtc = /공정거래|독점|약관|하도급|가맹|표시광고|소비자|전자상거래|담합|제재|위반/.test(title);
             const { matched, law } = isTargetLaw(title);
 
             if (matched || isFtc) {
                 items.push({
                     source: 'ftc.go.kr', type: '보도자료', title,
-                    law: law ? law.name : '공정거래 관련 법령', pubDate: dateStr,
+                    law: law ? law.name : '공정거래 관련 법령', pubDate: '',
                     link: `https://www.ftc.go.kr/www/selectBbsNttView.do?key=12&bordCd=3&searchCtgry=01,02&nttSn=${nttSn}`,
                     content: '', importance: 3
                 });
