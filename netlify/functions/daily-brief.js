@@ -483,24 +483,33 @@ async function collectMoelPress() {
         const html = await res.text();
         const items = [];
 
-        // 제목과 날짜 패턴
-        const rowRegex = /<tr[^>]*>[\s\S]*?<a[^>]*href="([^"]*)"[^>]*>([^<]+)<\/a>[\s\S]*?<td[^>]*>(\d{4}\.\d{2}\.\d{2})<\/td>/g;
-        let match;
+        // enewsView.do?news_seq= 링크 패턴
+        const linkRegex = /enewsView\.do\?news_seq=(\d+)/g;
+        const matches = [...html.matchAll(linkRegex)];
+        const seen = new Set();
 
-        while ((match = rowRegex.exec(html)) !== null) {
-            const href = match[1];
-            const title = match[2].trim();
-            const dateStr = match[3];
+        for (const m of matches) {
+            const newsSeq = m[1];
+            if (seen.has(newsSeq)) continue;
+            seen.add(newsSeq);
 
-            if (!isWithin7Days(dateStr)) continue;
-            if (shouldExclude(title)) continue;
+            const idx = html.indexOf(m[0]);
+            const surroundingText = html.substring(Math.max(0, idx - 50), idx + 200);
 
+            // 제목 추출
+            const titleMatch = surroundingText.match(/>\s*([^<]{10,100})\s*</);
+            const title = titleMatch ? titleMatch[1].trim() : '';
+            if (!title || shouldExclude(title)) continue;
+
+            // 노동 관련 키워드 또는 모니터링 대상 법률 매칭
+            const isLabor = /근로|고용|노동|채용|임금|퇴직|산업안전|직업안정|일자리/.test(title);
             const { matched, law } = isTargetLaw(title);
-            if (matched) {
+
+            if (matched || isLabor) {
                 items.push({
                     source: 'moel.go.kr', type: '보도자료', title,
-                    law: law.name, pubDate: dateStr,
-                    link: href.startsWith('http') ? href : `https://www.moel.go.kr${href}`,
+                    law: law ? law.name : '노동관계법령', pubDate: '',
+                    link: `https://www.moel.go.kr/news/enews/report/enewsView.do?news_seq=${newsSeq}`,
                     content: '', importance: 3
                 });
             }
@@ -512,6 +521,7 @@ async function collectMoelPress() {
         return [];
     }
 }
+
 
 // 공정거래위원회 보도자료
 async function collectFtcPress() {
@@ -547,11 +557,14 @@ async function collectFtcPress() {
 
             if (!title || !isWithin7Days(dateStr) || shouldExclude(title)) continue;
 
+            // 공정거래 관련 키워드 또는 모니터링 대상 법률 매칭
+            const isFtc = /공정거래|독점|약관|하도급|가맹|표시광고|소비자|전자상거래|담합/.test(title);
             const { matched, law } = isTargetLaw(title);
-            if (matched) {
+
+            if (matched || isFtc) {
                 items.push({
                     source: 'ftc.go.kr', type: '보도자료', title,
-                    law: law.name, pubDate: dateStr,
+                    law: law ? law.name : '공정거래 관련 법령', pubDate: dateStr,
                     link: `https://www.ftc.go.kr/www/selectBbsNttView.do?key=12&bordCd=3&searchCtgry=01,02&nttSn=${nttSn}`,
                     content: '', importance: 3
                 });
@@ -595,11 +608,14 @@ async function collectPipcPress() {
 
             if (!title || !isWithin7Days(dateStr) || shouldExclude(title)) continue;
 
+            // 개인정보 관련 키워드 또는 모니터링 대상 법률 매칭
+            const isPipc = /개인정보|정보보호|정보통신망|데이터|보호법|기업정보|유출/.test(title);
             const { matched, law } = isTargetLaw(title);
-            if (matched) {
+
+            if (matched || isPipc) {
                 items.push({
                     source: 'pipc.go.kr', type: '보도자료', title,
-                    law: law.name, pubDate: dateStr,
+                    law: law ? law.name : '개인정보 관련 법령', pubDate: dateStr,
                     link: `https://www.pipc.go.kr/np/cop/bbs/selectBoardArticle.do?bbsId=BS074&mCode=C020010000&nttId=${nttId}`,
                     content: '', importance: 3
                 });
@@ -643,11 +659,14 @@ async function collectMsitPress() {
 
             if (!title || !isWithin7Days(dateStr) || shouldExclude(title)) continue;
 
+            // IT 관련 키워드 또는 모니터링 대상 법률 매칭
+            const isMsit = /정보통신|인공지능|AI|데이터|전자금융|전자상거래|통신|소프트웨어|플랫폼/.test(title);
             const { matched, law } = isTargetLaw(title);
-            if (matched) {
+
+            if (matched || isMsit) {
                 items.push({
                     source: 'msit.go.kr', type: '보도자료', title,
-                    law: law.name, pubDate: dateStr,
+                    law: law ? law.name : 'IT 관련 법령', pubDate: dateStr,
                     link: `https://www.msit.go.kr/bbs/view.do?sCode=user&mPid=208&mId=307&nttSeqNo=${nttSeqNo}`,
                     content: '', importance: 3
                 });
@@ -691,11 +710,14 @@ async function collectFscPress() {
 
             if (!title || !isWithin7Days(dateStr) || shouldExclude(title)) continue;
 
+            // 금융 관련 키워드 또는 모니터링 대상 법률 매칭
+            const isFsc = /금융|은행|증권|보험|자본시장|전자금융|핀테크|투자|대출/.test(title);
             const { matched, law } = isTargetLaw(title);
-            if (matched) {
+
+            if (matched || isFsc) {
                 items.push({
                     source: 'fsc.go.kr', type: '보도자료', title,
-                    law: law.name, pubDate: dateStr,
+                    law: law ? law.name : '금융 관련 법령', pubDate: dateStr,
                     link: `https://www.fsc.go.kr/no010101?bbsSeq=${bbsSeq}`,
                     content: '', importance: 3
                 });
