@@ -216,25 +216,51 @@ async function collectMoel() {
     }
 }
 
-// 공정거래위원회
+// 공정거래위원회 - 입법·행정예고
 async function collectFtc() {
     try {
         const res = await fetch('https://www.ftc.go.kr/www/selectBbsNttList.do?bordCd=105&key=193', {
-            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LegalMonitor/1.0)' }
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
         });
-        if (!res.ok) return [];
+        if (!res.ok) {
+            console.log('[ftc] Response not ok:', res.status);
+            return [];
+        }
 
         const html = await res.text();
         const items = [];
-        const titleRegex = /onclick="[^"]*nttSn=(\d+)[^"]*"[^>]*>\s*([^<]+)/g;
-        const matches = [...html.matchAll(titleRegex)];
 
+        // URL에서 nttSn 추출하는 정규식
+        const linkRegex = /selectBbsNttView\.do[^"']*nttSn=(\d+)[^"']*/g;
+        const titleRegex = /「([^」]+)」[^<]*(입법예고|행정예고|개정안|개정령)/g;
+
+        // nttSn 추출
+        const nttSnMatches = [...html.matchAll(linkRegex)];
         const seen = new Set();
-        for (const m of matches) {
+
+        for (const m of nttSnMatches) {
             const nttSn = m[1];
-            const title = m[2].trim();
-            if (seen.has(nttSn) || !title || title.length < 5 || shouldExclude(title)) continue;
+            if (seen.has(nttSn)) continue;
             seen.add(nttSn);
+
+            // 제목 찾기 - nttSn 주변의 텍스트에서
+            const fullMatch = m[0];
+            const surroundingText = html.substring(
+                Math.max(0, html.indexOf(fullMatch) - 200),
+                html.indexOf(fullMatch) + 200
+            );
+
+            // 제목 추출 시도
+            const titleMatch = surroundingText.match(/「([^」]+)」[^<]*(입법예고|행정예고|개정안|개정령)?/);
+            let title = titleMatch ? `「${titleMatch[1]}」 ${titleMatch[2] || ''}` : '';
+
+            if (!title || title.length < 5) {
+                // 다른 방식으로 제목 추출
+                const altTitle = surroundingText.match(/>([^<]{10,100}(?:입법예고|행정예고|개정안|개정령)[^<]*)</);
+                title = altTitle ? altTitle[1].trim() : '';
+            }
+
+            if (!title || title.length < 5 || shouldExclude(title)) continue;
 
             const isFtc = /공정거래|독점규제|약관|하도급|가맹|표시광고|대규모유통|소비자|방문판매|전자상거래/.test(title);
             const { matched, law } = isTargetLaw(title);
@@ -257,35 +283,50 @@ async function collectFtc() {
     }
 }
 
-// 개인정보보호위원회
+// 개인정보보호위원회 - 훈령/예규/고시 (입법예고 페이지가 별도로 없음)
 async function collectPipc() {
     try {
-        const res = await fetch('https://www.pipc.go.kr/np/cop/bbs/selectBoardList.do?bbsId=BS074&mCode=C020010000', {
-            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LegalMonitor/1.0)' }
+        // 훈령·예규·고시 페이지 사용
+        const res = await fetch('https://www.pipc.go.kr/np/cop/bbs/selectBoardList.do?bbsId=BS216&mCode=G010020010', {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
         });
-        if (!res.ok) return [];
+        if (!res.ok) {
+            console.log('[pipc] Response not ok:', res.status);
+            return [];
+        }
 
         const html = await res.text();
         const items = [];
-        const linkRegex = /href="([^"]*selectBoardArticle[^"]*nttId=(\d+)[^"]*)"(?:[^>]*title="([^"]*)")?/g;
+
+        // 링크 패턴으로 게시글 찾기
+        const linkRegex = /selectBoardArticle\.do[^"']*nttId=(\d+)/g;
         const matches = [...html.matchAll(linkRegex)];
 
         const seen = new Set();
         for (const m of matches) {
-            const href = m[1];
-            const nttId = m[2];
-            let title = m[3] || '';
-            if (seen.has(nttId) || !title || title.length < 5 || shouldExclude(title)) continue;
+            const nttId = m[1];
+            if (seen.has(nttId)) continue;
             seen.add(nttId);
+
+            // 주변 텍스트에서 제목 추출
+            const idx = html.indexOf(m[0]);
+            const surroundingText = html.substring(Math.max(0, idx - 300), idx + 100);
+
+            // 제목 패턴 매칭
+            const titleMatch = surroundingText.match(/>([^<]{10,150}(?:개인정보|보호법|시행령|시행규칙|가이드|지침|고시)[^<]*)</) ||
+                surroundingText.match(/title="([^"]{10,150})"/);
+
+            const title = titleMatch ? titleMatch[1].trim() : '';
+            if (!title || title.length < 5 || shouldExclude(title)) continue;
 
             const isPipc = /개인정보|정보보호|정보통신망|보호법/.test(title);
             const { matched, law } = isTargetLaw(title);
 
             if (matched || isPipc) {
                 const item = {
-                    source: 'pipc.go.kr', type: '입법예고', title,
+                    source: 'pipc.go.kr', type: '훈령·예규·고시', title,
                     law: law ? law.name : '개인정보 관련 법령', pubDate: '',
-                    link: `https://www.pipc.go.kr${href}`, content: ''
+                    link: `https://www.pipc.go.kr/np/cop/bbs/selectBoardArticle.do?bbsId=BS216&mCode=G010020010&nttId=${nttId}`, content: ''
                 };
                 item.importance = calculateImportance(item);
                 items.push(item);
@@ -299,26 +340,39 @@ async function collectPipc() {
     }
 }
 
-// 과학기술정보통신부
+// 과학기술정보통신부 - 입법예고
 async function collectMsit() {
     try {
         const res = await fetch('https://www.msit.go.kr/bbs/list.do?sCode=user&mId=113&mPid=112', {
-            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LegalMonitor/1.0)' }
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
         });
-        if (!res.ok) return [];
+        if (!res.ok) {
+            console.log('[msit] Response not ok:', res.status);
+            return [];
+        }
 
         const html = await res.text();
         const items = [];
-        const titleRegex = /<a[^>]*href="([^"]*nttSeqNo=(\d+)[^"]*)"[^>]*>\s*([^<]+)/g;
-        const matches = [...html.matchAll(titleRegex)];
+
+        // nttSeqNo 추출
+        const linkRegex = /view\.do[^"']*nttSeqNo=(\d+)/g;
+        const matches = [...html.matchAll(linkRegex)];
 
         const seen = new Set();
         for (const m of matches) {
-            const href = m[1];
-            const nttId = m[2];
-            const title = m[3].trim();
-            if (seen.has(nttId) || !title || title.length < 5 || shouldExclude(title)) continue;
-            seen.add(nttId);
+            const nttSeqNo = m[1];
+            if (seen.has(nttSeqNo)) continue;
+            seen.add(nttSeqNo);
+
+            // 주변 텍스트에서 제목 추출
+            const idx = html.indexOf(m[0]);
+            const surroundingText = html.substring(Math.max(0, idx - 300), idx + 100);
+
+            const titleMatch = surroundingText.match(/>([^<]{10,150}(?:입법예고|행정예고|개정|시행령|시행규칙)[^<]*)</) ||
+                surroundingText.match(/title="([^"]{10,150})"/);
+
+            const title = titleMatch ? titleMatch[1].trim() : '';
+            if (!title || title.length < 5 || shouldExclude(title)) continue;
 
             const isMsit = /정보통신|인공지능|전자금융|전자상거래|정보보호|통신/.test(title);
             const { matched, law } = isTargetLaw(title);
@@ -327,7 +381,7 @@ async function collectMsit() {
                 const item = {
                     source: 'msit.go.kr', type: '입법예고', title,
                     law: law ? law.name : 'IT 관련 법령', pubDate: '',
-                    link: `https://www.msit.go.kr${href}`, content: ''
+                    link: `https://www.msit.go.kr/bbs/view.do?sCode=user&mId=113&mPid=112&nttSeqNo=${nttSeqNo}`, content: ''
                 };
                 item.importance = calculateImportance(item);
                 items.push(item);
@@ -341,26 +395,42 @@ async function collectMsit() {
     }
 }
 
-// 금융위원회
+// 금융위원회 - 입법예고
 async function collectFsc() {
     try {
         const res = await fetch('https://www.fsc.go.kr/po040101', {
-            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LegalMonitor/1.0)' }
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
         });
-        if (!res.ok) return [];
+        if (!res.ok) {
+            console.log('[fsc] Response not ok:', res.status);
+            return [];
+        }
 
         const html = await res.text();
         const items = [];
-        const titleRegex = /<a[^>]*href="([^"]*po040101[^"]*bbsSeq=(\d+)[^"]*)"[^>]*>[\s\S]*?<span[^>]*>([^<]+)/g;
-        const matches = [...html.matchAll(titleRegex)];
+
+        // bbsSeq 추출
+        const linkRegex = /po040101[^"']*bbsSeq=(\d+)/g;
+        const matches = [...html.matchAll(linkRegex)];
 
         const seen = new Set();
         for (const m of matches) {
-            const href = m[1];
-            const bbsSeq = m[2];
-            const title = m[3].trim();
-            if (seen.has(bbsSeq) || !title || title.length < 5 || shouldExclude(title)) continue;
+            const bbsSeq = m[1];
+            if (seen.has(bbsSeq)) continue;
             seen.add(bbsSeq);
+
+            // 주변 텍스트에서 제목 추출
+            const idx = html.indexOf(m[0]);
+            const surroundingText = html.substring(Math.max(0, idx - 300), idx + 100);
+
+            const titleMatch = surroundingText.match(/>([^<]{10,150}(?:입법예고|행정예고|개정|시행령|시행규칙)[^<]*)</) ||
+                surroundingText.match(/「([^」]+)」/) ||
+                surroundingText.match(/title="([^"]{10,150})"/);
+
+            let title = titleMatch ? (titleMatch[1] || titleMatch[0]).trim() : '';
+            if (title.startsWith('「')) title = title; // 「」 형식 유지
+
+            if (!title || title.length < 5 || shouldExclude(title)) continue;
 
             const isFsc = /금융|자본시장|전자금융|은행|보험|증권/.test(title);
             const { matched, law } = isTargetLaw(title);
@@ -369,7 +439,7 @@ async function collectFsc() {
                 const item = {
                     source: 'fsc.go.kr', type: '입법예고', title,
                     law: law ? law.name : '금융 관련 법령', pubDate: '',
-                    link: href.startsWith('http') ? href : `https://www.fsc.go.kr${href}`, content: ''
+                    link: `https://www.fsc.go.kr/po040101?bbsSeq=${bbsSeq}`, content: ''
                 };
                 item.importance = calculateImportance(item);
                 items.push(item);
@@ -382,6 +452,7 @@ async function collectFsc() {
         return [];
     }
 }
+
 
 // Netlify Functions Handler
 exports.handler = async function (event, context) {
