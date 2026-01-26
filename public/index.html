@@ -92,8 +92,51 @@
       display: flex;
       justify-content: center;
       gap: 10px;
-      margin-bottom: 30px;
+      margin-bottom: 20px;
       flex-wrap: wrap;
+    }
+
+    .tabs {
+      display: flex;
+      justify-content: center;
+      gap: 0;
+      margin-bottom: 30px;
+    }
+
+    .tab-btn {
+      padding: 12px 30px;
+      border: none;
+      background: rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 0.95rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    .tab-btn:first-child {
+      border-radius: 25px 0 0 25px;
+    }
+
+    .tab-btn:last-child {
+      border-radius: 0 25px 25px 0;
+    }
+
+    .tab-btn.active {
+      background: linear-gradient(90deg, #f857a6, #ff5858);
+      color: #fff;
+    }
+
+    .tab-btn:hover:not(.active) {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .tab-count {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.75rem;
+      margin-left: 8px;
     }
 
     .btn {
@@ -368,6 +411,15 @@
       </button>
     </div>
 
+    <div class="tabs" id="tabs" style="display: none;">
+      <button class="tab-btn active" onclick="switchTab('legislation')">
+        📜 입법예고<span class="tab-count" id="legCount">0</span>
+      </button>
+      <button class="tab-btn" onclick="switchTab('press')">
+        📰 보도자료<span class="tab-count" id="pressCount">0</span>
+      </button>
+    </div>
+
     <div class="loading" id="loading" style="display: none;">
       <div class="spinner"></div>
       <p>7개 기관에서 데이터 수집 중...</p>
@@ -409,15 +461,27 @@
       const btn = document.getElementById('fetchBtn');
       const loading = document.getElementById('loading');
       const results = document.getElementById('results');
+      const tabs = document.getElementById('tabs');
 
       btn.disabled = true;
       btn.textContent = '수집 중...';
       loading.style.display = 'block';
       results.classList.remove('show');
+      tabs.style.display = 'none';
 
       try {
         const response = await fetch('/api/daily-brief?format=json');
         const data = await response.json();
+
+        allData = data;
+
+        // 카테고리별 개수 업데이트
+        const { legislation, press } = categorizeItems(data.items || []);
+        document.getElementById('legCount').textContent = legislation.length;
+        document.getElementById('pressCount').textContent = press.length;
+
+        // 탭 표시
+        tabs.style.display = 'flex';
 
         displayResults(data);
         document.getElementById('lastUpdate').textContent =
@@ -440,14 +504,19 @@
 
     function displayResults(data) {
       const results = document.getElementById('results');
-      const items = data.items || [];
+      const allItems = data.items || [];
       const stats = data.stats || {};
+
+      // 현재 탭에 맞는 항목 필터링
+      const { legislation, press } = categorizeItems(allItems);
+      const items = currentTab === 'legislation' ? legislation : press;
+      const tabLabel = currentTab === 'legislation' ? '📜 입법예고' : '📰 보도자료';
 
       let html = '';
 
       // 통계 요약
       html += '<div class="summary">';
-      html += `<h3>📊 수집 결과 (총 ${items.length}건)</h3>`;
+      html += `<h3>📊 ${tabLabel} (${items.length}건)</h3>`;
       html += '<div class="stats">';
       for (const [source, count] of Object.entries(stats)) {
         const hasData = count > 0;
@@ -458,8 +527,8 @@
       if (items.length === 0) {
         html += `
           <div class="no-updates">
-            <h3>✅ 새로운 업데이트 없음</h3>
-            <p>최근 24~48시간 동안 관리 대상 법률 관련 신규/개정 공고사항이 없습니다.</p>
+            <h3>✅ ${tabLabel} 없음</h3>
+            <p>관련 항목이 없습니다.</p>
           </div>
         `;
       } else {
@@ -497,6 +566,33 @@
     function showLaws() {
       const grid = document.getElementById('lawsGrid');
       grid.style.display = grid.style.display === 'none' ? 'grid' : 'none';
+    }
+
+    // 탭 전환 및 데이터 저장
+    let allData = null;
+    let currentTab = 'legislation';
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+      if (allData) displayResults(allData);
+    }
+
+    function categorizeItems(items) {
+      const legislation = [];
+      const press = [];
+
+      for (const item of items) {
+        const type = (item.type || '').toLowerCase();
+        if (type.includes('보도') || type.includes('정책') || type.includes('안내')) {
+          press.push(item);
+        } else {
+          legislation.push(item);
+        }
+      }
+
+      return { legislation, press };
     }
   </script>
 </body>

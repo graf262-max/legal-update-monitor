@@ -453,6 +453,136 @@ async function collectFsc() {
     }
 }
 
+// ====== 보도자료 수집기 ======
+
+// 공정거래위원회 보도자료
+async function collectFtcPress() {
+    try {
+        const res = await fetch('https://www.ftc.go.kr/www/selectBbsNttList.do?bordCd=3&key=12', {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        });
+        if (!res.ok) return [];
+
+        const html = await res.text();
+        const items = [];
+        const linkRegex = /selectBbsNttView\.do[^"']*nttSn=(\d+)/g;
+        const matches = [...html.matchAll(linkRegex)];
+        const seen = new Set();
+
+        for (const m of matches) {
+            const nttSn = m[1];
+            if (seen.has(nttSn)) continue;
+            seen.add(nttSn);
+
+            const idx = html.indexOf(m[0]);
+            const surroundingText = html.substring(Math.max(0, idx - 300), idx + 50);
+            const titleMatch = surroundingText.match(/>([^<]{15,})</) || surroundingText.match(/title="([^"]{15,})"/);
+            const title = titleMatch ? titleMatch[1].trim() : '';
+            if (!title || shouldExclude(title)) continue;
+
+            const { matched, law } = isTargetLaw(title);
+            if (matched) {
+                items.push({
+                    source: 'ftc.go.kr', type: '보도자료', title,
+                    law: law.name, pubDate: '',
+                    link: `https://www.ftc.go.kr/www/selectBbsNttView.do?key=12&bordCd=3&nttSn=${nttSn}`,
+                    content: '', importance: 3
+                });
+            }
+        }
+        console.log('[ftc-press] Collected:', items.length);
+        return items;
+    } catch (e) {
+        console.error('[ftc-press] Error:', e.message);
+        return [];
+    }
+}
+
+// 개인정보보호위원회 보도자료
+async function collectPipcPress() {
+    try {
+        const res = await fetch('https://www.pipc.go.kr/np/cop/bbs/selectBoardList.do?bbsId=BS074&mCode=C020010000', {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        });
+        if (!res.ok) return [];
+
+        const html = await res.text();
+        const items = [];
+        const linkRegex = /selectBoardArticle\.do[^"']*nttId=(\d+)/g;
+        const matches = [...html.matchAll(linkRegex)];
+        const seen = new Set();
+
+        for (const m of matches) {
+            const nttId = m[1];
+            if (seen.has(nttId)) continue;
+            seen.add(nttId);
+
+            const idx = html.indexOf(m[0]);
+            const surroundingText = html.substring(Math.max(0, idx - 300), idx + 50);
+            const titleMatch = surroundingText.match(/>([^<]{15,})</) || surroundingText.match(/title="([^"]{15,})"/);
+            const title = titleMatch ? titleMatch[1].trim() : '';
+            if (!title || shouldExclude(title)) continue;
+
+            const { matched, law } = isTargetLaw(title);
+            if (matched) {
+                items.push({
+                    source: 'pipc.go.kr', type: '보도자료', title,
+                    law: law.name, pubDate: '',
+                    link: `https://www.pipc.go.kr/np/cop/bbs/selectBoardArticle.do?bbsId=BS074&mCode=C020010000&nttId=${nttId}`,
+                    content: '', importance: 3
+                });
+            }
+        }
+        console.log('[pipc-press] Collected:', items.length);
+        return items;
+    } catch (e) {
+        console.error('[pipc-press] Error:', e.message);
+        return [];
+    }
+}
+
+// 금융위원회 보도자료
+async function collectFscPress() {
+    try {
+        const res = await fetch('https://www.fsc.go.kr/no010101', {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        });
+        if (!res.ok) return [];
+
+        const html = await res.text();
+        const items = [];
+        const linkRegex = /no010101[^"']*bbsSeq=(\d+)/g;
+        const matches = [...html.matchAll(linkRegex)];
+        const seen = new Set();
+
+        for (const m of matches) {
+            const bbsSeq = m[1];
+            if (seen.has(bbsSeq)) continue;
+            seen.add(bbsSeq);
+
+            const idx = html.indexOf(m[0]);
+            const surroundingText = html.substring(Math.max(0, idx - 300), idx + 50);
+            const titleMatch = surroundingText.match(/>([^<]{15,})</) || surroundingText.match(/title="([^"]{15,})"/);
+            const title = titleMatch ? titleMatch[1].trim() : '';
+            if (!title || shouldExclude(title)) continue;
+
+            const { matched, law } = isTargetLaw(title);
+            if (matched) {
+                items.push({
+                    source: 'fsc.go.kr', type: '보도자료', title,
+                    law: law.name, pubDate: '',
+                    link: `https://www.fsc.go.kr/no010101?bbsSeq=${bbsSeq}`,
+                    content: '', importance: 3
+                });
+            }
+        }
+        console.log('[fsc-press] Collected:', items.length);
+        return items;
+    } catch (e) {
+        console.error('[fsc-press] Error:', e.message);
+        return [];
+    }
+}
 
 // Netlify Functions Handler
 exports.handler = async function (event, context) {
@@ -462,15 +592,20 @@ exports.handler = async function (event, context) {
         const stats = {};
         const errors = [];
 
-        // 모든 수집기를 병렬로 실행
+        // 모든 수집기를 병렬로 실행 (입법예고 + 보도자료)
         const collectors = [
+            // 입법예고
             { name: '국가법령정보센터', fn: collectLawGoKr },
             { name: '열린국회정보', fn: collectAssembly },
             { name: '고용노동부', fn: collectMoel },
             { name: '공정거래위원회', fn: collectFtc },
             { name: '개인정보보호위원회', fn: collectPipc },
             { name: '과학기술정보통신부', fn: collectMsit },
-            { name: '금융위원회', fn: collectFsc }
+            { name: '금융위원회', fn: collectFsc },
+            // 보도자료
+            { name: '공정위 보도', fn: collectFtcPress },
+            { name: '개인정보위 보도', fn: collectPipcPress },
+            { name: '금융위 보도', fn: collectFscPress }
         ];
 
         const results = await Promise.allSettled(collectors.map(c => c.fn()));
@@ -509,7 +644,7 @@ exports.handler = async function (event, context) {
                 items: uniqueItems,
                 stats,
                 errors: errors.length > 0 ? errors : undefined,
-                note: '7개 기관 수집 (최근 6개월)'
+                note: '입법예고 + 보도자료 (10개 수집기)'
             })
         };
     } catch (error) {
@@ -521,3 +656,4 @@ exports.handler = async function (event, context) {
         };
     }
 };
+
