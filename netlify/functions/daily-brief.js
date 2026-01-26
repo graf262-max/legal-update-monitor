@@ -552,7 +552,7 @@ async function collectFtcPress() {
                 items.push({
                     source: 'ftc.go.kr', type: '보도자료', title,
                     law: law.name, pubDate: dateStr,
-                    link: `https://www.ftc.go.kr/www/selectBbsNttView.do?key=12&bordCd=3&nttSn=${nttSn}`,
+                    link: `https://www.ftc.go.kr/www/selectBbsNttView.do?key=12&bordCd=3&searchCtgry=01,02&nttSn=${nttSn}`,
                     content: '', importance: 3
                 });
             }

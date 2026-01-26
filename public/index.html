@@ -512,13 +512,25 @@
       const items = currentTab === 'legislation' ? legislation : press;
       const tabLabel = currentTab === 'legislation' ? '📜 입법예고' : '📰 보도자료';
 
+      // 탭에 맞는 통계만 필터링
+      const pressKeywords = ['보도'];
+      const filteredStats = {};
+      for (const [source, count] of Object.entries(stats)) {
+        const isPress = pressKeywords.some(kw => source.includes(kw));
+        if (currentTab === 'legislation' && !isPress) {
+          filteredStats[source] = count;
+        } else if (currentTab === 'press' && isPress) {
+          filteredStats[source] = count;
+        }
+      }
+
       let html = '';
 
       // 통계 요약
       html += '<div class="summary">';
       html += `<h3>📊 ${tabLabel} (${items.length}건)</h3>`;
       html += '<div class="stats">';
-      for (const [source, count] of Object.entries(stats)) {
+      for (const [source, count] of Object.entries(filteredStats)) {
         const hasData = count > 0;
         html += `<span class="stat ${hasData ? 'has-data' : ''}">${source}: ${count}건</span>`;
       }
