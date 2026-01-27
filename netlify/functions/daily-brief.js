@@ -494,10 +494,10 @@ async function collectMoelPress() {
             seen.add(newsSeq);
 
             const idx = html.indexOf(m[0]);
-            const surroundingText = html.substring(Math.max(0, idx - 50), idx + 200);
+            const surroundingText = html.substring(Math.max(0, idx - 50), idx + 300);
 
-            // 제목 추출
-            const titleMatch = surroundingText.match(/>\s*([^<]{10,100})\s*</);
+            // 제목 추출 - title 속성에서 추출
+            const titleMatch = surroundingText.match(/title="([^"]{10,200})"/);
             const title = titleMatch ? titleMatch[1].trim() : '';
             if (!title || shouldExclude(title)) continue;
 
@@ -550,12 +550,12 @@ async function collectFtcPress() {
             seen.add(nttSn);
 
             const idx = html.indexOf(m[0]);
-            // 링크 앞뒤 더 넓은 범위에서 제목 추출
-            const surroundingText = html.substring(Math.max(0, idx - 100), idx + 300);
+            // 링크 이후 범위에서 제목 추출
+            const surroundingText = html.substring(idx, idx + 400);
 
-            // 제목 추출 - 링크 텍스트 또는 주변 텍스트
-            const titleMatch = surroundingText.match(/>\s*([^<]{5,150})\s*<\/a>/) ||
-                surroundingText.match(/title="([^"]{5,150})"/) ||
+            // 제목 추출 - <span class="p-table__text">제목</span> 패턴
+            const titleMatch = surroundingText.match(/<span[^>]*class="p-table__text"[^>]*>([^<]+)<\/span>/) ||
+                surroundingText.match(/>\s*([^<]{5,150})\s*<\/a>/) ||
                 surroundingText.match(/>([^<]{5,150})</);
             const title = titleMatch ? titleMatch[1].trim() : '';
 
@@ -592,25 +592,27 @@ async function collectPipcPress() {
 
         const html = await res.text();
         const items = [];
-        const linkRegex = /selectBoardArticle\.do[^"']*nttId=(\d+)/g;
-        const matches = [...html.matchAll(linkRegex)];
+
+        // <a href="...nttId=XXX">제목</a> 패턴으로 직접 추출
+        const linkTitleRegex = /<a\s+href="[^"]*nttId=(\d+)"[^>]*>([^<]+)</g;
+        const matches = [...html.matchAll(linkTitleRegex)];
         const seen = new Set();
 
+        // 날짜 패턴 추출 (순서대로 매칭)
+        const dateMatches = [...html.matchAll(/<td>(\d{4}-\d{2}-\d{2})<\/td>/g)];
+
+        let dateIdx = 0;
         for (const m of matches) {
             const nttId = m[1];
+            const title = m[2].trim();
+
             if (seen.has(nttId)) continue;
             seen.add(nttId);
 
-            const idx = html.indexOf(m[0]);
-            const surroundingText = html.substring(Math.max(0, idx - 400), idx + 100);
+            const dateStr = dateMatches[dateIdx] ? dateMatches[dateIdx][1] : '';
+            dateIdx++;
 
-            const titleMatch = surroundingText.match(/>([^<]{10,100})</);
-            const title = titleMatch ? titleMatch[1].trim() : '';
-
-            const dateMatch = surroundingText.match(/(\d{4}[\.\-]\d{2}[\.\-]\d{2})/);
-            const dateStr = dateMatch ? dateMatch[1] : '';
-
-            if (!title || !isWithin7Days(dateStr) || shouldExclude(title)) continue;
+            if (!title || title.length < 5 || !isWithin7Days(dateStr) || shouldExclude(title)) continue;
 
             // 개인정보 관련 키워드 또는 모니터링 대상 법률 매칭
             const isPipc = /개인정보|정보보호|정보통신망|데이터|보호법|기업정보|유출/.test(title);
@@ -643,34 +645,37 @@ async function collectMsitPress() {
 
         const html = await res.text();
         const items = [];
-        const linkRegex = /view\.do[^"']*nttSeqNo=(\d+)/g;
-        const matches = [...html.matchAll(linkRegex)];
-        const seen = new Set();
 
-        for (const m of matches) {
-            const nttSeqNo = m[1];
-            if (seen.has(nttSeqNo)) continue;
-            seen.add(nttSeqNo);
+        // ID 목록 추출 (fn_detail(ID) 패턴)
+        const idMatches = [...html.matchAll(/fn_detail\((\d+)\)/g)];
+        const seenIds = new Set();
+        const uniqueIds = [];
+        for (const m of idMatches) {
+            if (!seenIds.has(m[1])) {
+                seenIds.add(m[1]);
+                uniqueIds.push(m[1]);
+            }
+        }
 
-            const idx = html.indexOf(m[0]);
-            const surroundingText = html.substring(Math.max(0, idx - 400), idx + 100);
+        // 제목 목록 추출 (sHtml+= unescape('제목') 패턴)
+        const titleMatches = [...html.matchAll(/sHtml\+= unescape\('([^']+)'\);/g)];
+        const titles = titleMatches.map(m => m[1].trim());
 
-            const titleMatch = surroundingText.match(/>([^<]{10,100})</);
-            const title = titleMatch ? titleMatch[1].trim() : '';
+        // ID와 제목을 인덱스로 매칭
+        for (let i = 0; i < Math.min(uniqueIds.length, titles.length); i++) {
+            const nttSeqNo = uniqueIds[i];
+            const title = titles[i];
 
-            const dateMatch = surroundingText.match(/(\d{4}[\.\-]\d{2}[\.\-]\d{2})/);
-            const dateStr = dateMatch ? dateMatch[1] : '';
-
-            if (!title || !isWithin7Days(dateStr) || shouldExclude(title)) continue;
+            if (!title || title.length < 10 || shouldExclude(title)) continue;
 
             // IT 관련 키워드 또는 모니터링 대상 법률 매칭
-            const isMsit = /정보통신|인공지능|AI|데이터|전자금융|전자상거래|통신|소프트웨어|플랫폼/.test(title);
+            const isMsit = /정보통신|인공지능|AI|데이터|전자금융|전자상거래|통신|소프트웨어|플랫폼|과학|기술|사이버/.test(title);
             const { matched, law } = isTargetLaw(title);
 
             if (matched || isMsit) {
                 items.push({
                     source: 'msit.go.kr', type: '보도자료', title,
-                    law: law ? law.name : 'IT 관련 법령', pubDate: dateStr,
+                    law: law ? law.name : 'IT 관련 법령', pubDate: '',
                     link: `https://www.msit.go.kr/bbs/view.do?sCode=user&mPid=208&mId=307&nttSeqNo=${nttSeqNo}`,
                     content: '', importance: 3
                 });
@@ -694,7 +699,8 @@ async function collectFscPress() {
 
         const html = await res.text();
         const items = [];
-        const linkRegex = /no010101[^"']*bbsSeq=(\d+)/g;
+        // /no010101/ID 패턴
+        const linkRegex = /\/no010101\/(\d+)/g;
         const matches = [...html.matchAll(linkRegex)];
         const seen = new Set();
 
@@ -704,9 +710,11 @@ async function collectFscPress() {
             seen.add(bbsSeq);
 
             const idx = html.indexOf(m[0]);
-            const surroundingText = html.substring(Math.max(0, idx - 400), idx + 100);
+            // 링크 이후에서 title 속성 찾기
+            const surroundingText = html.substring(idx, idx + 500);
 
-            const titleMatch = surroundingText.match(/>([^<]{10,100})</);
+            // 제목 추출 - title 속성
+            const titleMatch = surroundingText.match(/title="([^"]{10,300})"/);
             const title = titleMatch ? titleMatch[1].trim() : '';
 
             const dateMatch = surroundingText.match(/(\d{4}[\.\-]\d{2}[\.\-]\d{2})/);
@@ -722,7 +730,7 @@ async function collectFscPress() {
                 items.push({
                     source: 'fsc.go.kr', type: '보도자료', title,
                     law: law ? law.name : '금융 관련 법령', pubDate: dateStr,
-                    link: `https://www.fsc.go.kr/no010101?bbsSeq=${bbsSeq}`,
+                    link: `https://www.fsc.go.kr/no010101/${bbsSeq}`,
                     content: '', importance: 3
                 });
             }
