@@ -20,8 +20,8 @@ const TARGET_LAWS = [
     { name: '저작권법', keywords: ['저작권법'] }
 ];
 
-// 제외할 키워드 (상법/민법과 혼동되는 법률)
-const EXCLUDE_KEYWORDS = ['보상', '난민', '이탈주민', '북한이탈'];
+// 제외할 키워드 (상법/민법과 혼동되는 법률 + 인사/임명 관련)
+const EXCLUDE_KEYWORDS = ['보상', '난민', '이탈주민', '북한이탈', '인사 보도', '인사보도', '임명 제청', '전보', '인사(', '은행장 임명'];
 
 function isTargetLaw(title) {
     const normalized = title.replace(/\s+/g, '');
