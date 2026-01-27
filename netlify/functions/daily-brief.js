@@ -615,7 +615,7 @@ async function collectPipcPress() {
             if (!title || title.length < 5 || !isWithin7Days(dateStr) || shouldExclude(title)) continue;
 
             // 개인정보 관련 키워드 또는 모니터링 대상 법률 매칭
-            const isPipc = /개인정보|정보보호|정보통신망|데이터|보호법|기업정보|유출/.test(title);
+            const isPipc = /개인정보|정보보호|정보통신망|데이터|보호법|기업정보|유출|프라이버시|자율주행|AI|인공지능/.test(title);
             const { matched, law } = isTargetLaw(title);
 
             if (matched || isPipc) {
